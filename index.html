@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Jungle Pirate Run!</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #1a1a2e; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; font-family: 'Courier New', monospace; }
+canvas { display: block; image-rendering: pixelated; border: 4px solid #e6a817; border-radius: 8px; box-shadow: 0 0 30px rgba(230,168,23,0.4); }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+canvas.width = 800;
+canvas.height = 500;
+
+// Audio context
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+function playSound(type) {
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  const t = audioCtx.currentTime;
+  switch(type) {
+    case 'jump':
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(250, t);
+      osc.frequency.exponentialRampToValueAtTime(600, t + 0.15);
+      gain.gain.setValueAtTime(0.15, t);
+      gain.gain.exponentialRampToValueAtTime(0.01, t + 0.2);
+      osc.start(t); osc.stop(t + 0.2);
+      break;
+    case 'gem':
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(523, t);
+      osc.frequency.setValueAtTime(659, t + 0.05);
+      osc.frequency.setValueAtTime(784, t + 0.1);
+      gain.gain.setValueAtTime(0.2, t);
+      gain.gain.exponentialRampToValueAtTime(0.01, t + 0.25);
+      osc.start(t); osc.stop(t + 0.25);
+      break;
+    case 'hit':
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(200, t);
+      osc.frequency.exponentialRampToValueAtTime(50, t + 0.3);
+      gain.gain.setValueAtTime(0.2, t);
+      gain.gain.exponentialRampToValueAtTime(0.01, t + 0.35);
+      osc.start(t); osc.stop(t + 0.35);
+      break;
+    case 'gameover':
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(400, t);
+      osc.frequency.exponentialRampToValueAtTime(80, t + 0.8);
+      gain.gain.setValueAtTime(0.2, t);
+      gain.gain.exponentialRampToValueAtTime(0.01, t + 1);
+      osc.start(t); osc.stop(t + 1);
+      break;
+    case 'start':
+      osc.type = 'square';
+      [262,330,392,523].forEach((f,i) => {
+        osc.frequency.setValueAtTime(f, t + i*0.12);
+      });
+      gain.gain.setValueAtTime(0.15, t);
+      gain.gain.exponentialRampToValueAtTime(0.01, t + 0.6);
+      osc.start(t); osc.stop(t + 0.6);
+      break;
+  }
+}
+
+// Game state
+let gameState = 'start'; // start, playing, gameover
+let score = 0;
+let lives = 3;
+let invincibleTimer = 0;
+let frameCount = 0;
+let difficulty = 1;
+let screenShake = 0;
+let particles = [];
+let stars = [];
+
+// Generate stars for background
+for (let i = 0; i < 60; i++) {
+  stars.push({ x: Math.random()*800, y: Math.random()*200, s: Math.random()*2+1, b: Math.random() });
+}
+
+// Ground
+const GROUND_Y = 400;
+const GRAVITY = 0.6;
+
+// Player (Pirate)
+const player = {
+  x: 120, y: GROUND_Y, w: 36, h: 48,
+  vy: 0, speed: 4, onGround: true, facing: 1,
+  frame: 0, frameTimer: 0
+};
+
+// Keys
+const keys = {};
+window.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'Space') e.preventDefault();
+  if (gameState === 'start' && (e.code === 'Space' || e.code === 'Enter')) {
+    audioCtx.resume();
+    startGame();
+  }
+  if (gameState === 'gameover' && (e.code === 'Space' || e.code === 'Enter')) {
+    audioCtx.resume();
+    startGame();
+  }
+});
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+canvas.addEventListener('click', e => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = (e.clientX - rect.left) * (800/rect.width);
+  const my = (e.clientY - rect.top) * (500/rect.height);
+  if (gameState === 'start') { audioCtx.resume(); startGame(); }
+  if (gameState === 'gameover' && mx > 300 && mx < 500 && my > 310 && my < 370) { audioCtx.resume(); startGame(); }
+});
+
+let zombies = [];
+let gems = [];
+let platforms = [];
+let trees = [];
+let spawnTimer = 0;
+let gemTimer = 0;
+let platformTimer = 0;
+
+function startGame() {
+  playSound('start');
+  gameState = 'playing';
+  score = 0; lives = 3; difficulty = 1; invincibleTimer = 0; frameCount = 0;
+  player.x = 120; player.y = GROUND_Y; player.vy = 0; player.onGround = true;
+  zombies = []; gems = []; platforms = []; particles = [];
+  spawnTimer = 0; gemTimer = 0; platformTimer = 0;
+  trees = [];
+  for (let i = 0; i < 6; i++) {
+    trees.push({ x: i * 150 + Math.random()*80, type: Math.floor(Math.random()*3) });
+  }
+}
+
+function spawnZombie() {
+  const fromRight = Math.random() > 0.3;
+  zombies.push({
+    x: fromRight ? 820 : -40,
+    y: GROUND_Y,
+    w: 32, h: 44,
+    speed: (1.5 + Math.random() * difficulty * 0.8) * (fromRight ? -1 : 1),
+    frame: 0, frameTimer: 0, type: Math.floor(Math.random()*3)
+  });
+}
+
+function spawnGem() {
+  gems.push({
+    x: 100 + Math.random() * 600,
+    y: GROUND_Y - 30 - Math.random() * 150,
+    w: 20, h: 20,
+    type: Math.floor(Math.random()*3), // 0=red, 1=green, 2=blue
+    bob: Math.random() * Math.PI * 2,
+    collected: false
+  });
+}
+
+function addParticles(x, y, color, count) {
+  for (let i = 0; i < count; i++) {
+    particles.push({
+      x, y,
+      vx: (Math.random()-0.5)*6,
+      vy: (Math.random()-0.5)*6 - 2,
+      life: 30 + Math.random()*20,
+      color, size: 2+Math.random()*4
+    });
+  }
+}
+
+// Draw functions
+function drawPixelRect(x, y, w, h, color) {
+  ctx.fillStyle = color;
+  ctx.fillRect(Math.floor(x), Math.floor(y), w, h);
+}
+
+function drawPirate(x, y, facing, frame) {
+  const f = Math.floor(frame) % 4;
+  const blink = invincibleTimer > 0 && Math.floor(invincibleTimer/3) % 2;
+  if (blink) return;
+
+  // Body
+  drawPixelRect(x+10, y+16, 16, 20, '#8B4513');
+  // Shirt
+  drawPixelRect(x+10, y+16, 16, 14, '#DC143C');
+  // Belt
+  drawPixelRect(x+10, y+28, 16, 4, '#333');
+  drawPixelRect(x+16, y+28, 4, 4, '#FFD700');
+  // Pants
+  drawPixelRect(x+10, y+32, 7, 12, '#1a1a5e');
+  drawPixelRect(x+19, y+32, 7, 12, '#1a1a5e');
+  // Boots
+  drawPixelRect(x+8, y+42, 9, 6, '#4a2a0a');
+  drawPixelRect(x+19, y+42, 9, 6, '#4a2a0a');
+  // Legs walk
+  if (!player.onGround || (keys['ArrowLeft'] || keys['ArrowRight'])) {
+    const legOff = Math.sin(f * Math.PI/2) * 3;
+    drawPixelRect(x+10, y+44, 7, 4, '#4a2a0a');
+    drawPixelRect(x+19+legOff, y+44, 7, 4, '#4a2a0a');
+  }
+  // Head
+  drawPixelRect(x+10, y+4, 16, 14, '#DEB887');
+  // Eye
+  const ex = facing > 0 ? x+20 : x+14;
+  drawPixelRect(ex, y+8, 3, 3, '#000');
+  // Eyepatch
+  if (facing > 0) {
+    drawPixelRect(x+14, y+8, 4, 3, '#333');
+    drawPixelRect(x+13, y+6, 6, 2, '#333');
+  } else {
+    drawPixelRect(x+20, y+8, 4, 3, '#333');
+    drawPixelRect(x+19, y+6, 6, 2, '#333');
+  }
+  // Hat
+  drawPixelRect(x+6, y-2, 24, 4, '#333');
+  drawPixelRect(x+10, y-8, 16, 6, '#333');
+  // Skull on hat
+  drawPixelRect(x+15, y-6, 6, 4, '#FFF');
+  drawPixelRect(x+16, y-7, 4, 1, '#FFF');
+  drawPixelRect(x+16, y-5, 2, 2, '#333');
+  drawPixelRect(x+19, y-5, 2, 2, '#333');
+  // Sword
+  const sx = facing > 0 ? x+28 : x-2;
+  drawPixelRect(sx, y+18, 4, 16, '#C0C0C0');
+  drawPixelRect(sx-2, y+16, 8, 3, '#FFD700');
+  drawPixelRect(sx+1, y+12, 2, 4, '#C0C0C0');
+}
+
+function drawZombie(z) {
+  const x = z.x, y = z.y;
+  const f = Math.floor(z.frame) % 4;
+  const colors = ['#4a7a4a','#5a6a5a','#3a6a5a'];
+  const skinColor = colors[z.type];
+  // Body
+  drawPixelRect(x+8, y+14, 16, 18, '#555');
+  // Torn shirt
+  drawPixelRect(x+8, y+14, 16, 10, '#6a4a2a');
+  if (z.type === 1) drawPixelRect(x+8, y+14, 16, 10, '#4a4a6a');
+  // Head
+  drawPixelRect(x+8, y+2, 16, 14, skinColor);
+  // Eyes (glowing)
+  drawPixelRect(x+11, y+6, 4, 3, '#ff0');
+  drawPixelRect(x+18, y+6, 4, 3, '#ff0');
+  drawPixelRect(x+12, y+7, 2, 2, '#f00');
+  drawPixelRect(x+19, y+7, 2, 2, '#f00');
+  // Mouth
+  drawPixelRect(x+12, y+12, 8, 2, '#300');
+  drawPixelRect(x+13, y+11, 2, 1, '#fff');
+  drawPixelRect(x+18, y+11, 2, 1, '#fff');
+  // Arms (reaching out)
+  const armOff = Math.sin(f * Math.PI/2) * 3;
+  const dir = z.speed < 0 ? -1 : 1;
+  drawPixelRect(x + (dir>0?24:0) + armOff*dir, y+14, 8, 4, skinColor);
+  drawPixelRect(x + (dir>0?0:24) - armOff*dir, y+18, 8, 4, skinColor);
+  // Legs
+  drawPixelRect(x+8, y+32, 7, 10, '#444');
+  drawPixelRect(x+17, y+32, 7, 10, '#444');
+  // Feet shuffle
+  const fOff = Math.sin(f * Math.PI/2) * 2;
+  drawPixelRect(x+6+fOff, y+40, 9, 4, '#3a2a1a');
+  drawPixelRect(x+17-fOff, y+40, 9, 4, '#3a2a1a');
+}
+
+function drawGem(g) {
+  const x = g.x, y = g.y + Math.sin(g.bob)*5;
+  const colors = [['#ff4444','#ff8888','#cc0000'],['#44ff44','#88ff88','#00cc00'],['#4488ff','#88bbff','#0044cc']];
+  const c = colors[g.type];
+  // Diamond shape
+  ctx.fillStyle = c[0];
+  ctx.beginPath();
+  ctx.moveTo(x+10, y);
+  ctx.lineTo(x+20, y+10);
+  ctx.lineTo(x+10, y+20);
+  ctx.lineTo(x, y+10);
+  ctx.fill();
+  // Shine
+  ctx.fillStyle = c[1];
+  ctx.beginPath();
+  ctx.moveTo(x+10, y+2);
+  ctx.lineTo(x+16, y+10);
+  ctx.lineTo(x+10, y+12);
+  ctx.lineTo(x+6, y+10);
+  ctx.fill();
+  // Sparkle
+  if (frameCount % 20 < 10) {
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(x+7, y+5, 3, 3);
+  }
+}
+
+function drawHeart(x, y, filled) {
+  ctx.fillStyle = filled ? '#ff2255' : '#553333';
+  // Pixel heart
+  const heart = [
+    [0,1,1,0,0,1,1,0],
+    [1,1,1,1,1,1,1,1],
+    [1,1,1,1,1,1,1,1],
+    [0,1,1,1,1,1,1,0],
+    [0,0,1,1,1,1,0,0],
+    [0,0,0,1,1,0,0,0],
+  ];
+  heart.forEach((row,ry) => row.forEach((p,rx) => {
+    if (p) ctx.fillRect(x+rx*3, y+ry*3, 3, 3);
+  }));
+  if (filled) {
+    ctx.fillStyle = '#ff88aa';
+    ctx.fillRect(x+3, y+3, 3, 3);
+  }
+}
+
+function drawTree(tx, type) {
+  const y = GROUND_Y;
+  // Trunk
+  drawPixelRect(tx+12, y-40, 12, 40, '#6B3410');
+  drawPixelRect(tx+14, y-40, 4, 40, '#7a4420');
+  if (type === 0) {
+    // Round tree
+    for (let r = 30; r > 0; r -= 6) {
+      ctx.fillStyle = `hsl(${120+r}, 70%, ${25+r}%)`;
+      ctx.beginPath();
+      ctx.arc(tx+18, y-55, r, 0, Math.PI*2);
+      ctx.fill();
+    }
+  } else if (type === 1) {
+    // Palm tree
+    drawPixelRect(tx+12, y-60, 12, 60, '#6B3410');
+    for (let i = 0; i < 5; i++) {
+      const angle = (i/5)*Math.PI*2 + frameCount*0.005;
+      ctx.fillStyle = '#228B22';
+      ctx.save();
+      ctx.translate(tx+18, y-65);
+      ctx.rotate(angle);
+      ctx.fillRect(0, -4, 35, 8);
+      ctx.fillRect(30, -2, 10, 4);
+      ctx.restore();
+    }
+  } else {
+    // Bush tree
+    drawPixelRect(tx+12, y-30, 12, 30, '#6B3410');
+    for (let i = 0; i < 3; i++) {
+      ctx.fillStyle = `hsl(${100+i*20}, 65%, ${30+i*5}%)`;
+      ctx.beginPath();
+      ctx.arc(tx+8+i*10, y-35-i*5, 16, 0, Math.PI*2);
+      ctx.fill();
+    }
+  }
+}
+
+function drawBackground() {
+  // Sky gradient
+  const grad = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+  grad.addColorStop(0, '#0a0a2a');
+  grad.addColorStop(0.4, '#1a3a4a');
+  grad.addColorStop(0.7, '#2a5a3a');
+  grad.addColorStop(1, '#1a4a2a');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 800, GROUND_Y);
+
+  // Stars
+  stars.forEach(s => {
+    const b = (Math.sin(frameCount*0.02 + s.b*10) + 1) / 2;
+    ctx.fillStyle = `rgba(255,255,200,${0.3+b*0.7})`;
+    ctx.fillRect(s.x, s.y, s.s, s.s);
+  });
+
+  // Moon
+  ctx.fillStyle = '#ffffcc';
+  ctx.beginPath();
+  ctx.arc(680, 60, 30, 0, Math.PI*2);
+  ctx.fill();
+  ctx.fillStyle = '#0a0a2a';
+  ctx.beginPath();
+  ctx.arc(690, 55, 26, 0, Math.PI*2);
+  ctx.fill();
+
+  // Far mountains
+  ctx.fillStyle = '#0d2818';
+  ctx.beginPath();
+  ctx.moveTo(0, GROUND_Y);
+  for (let i = 0; i <= 800; i += 40) {
+    ctx.lineTo(i, GROUND_Y - 60 - Math.sin(i*0.01+1)*40 - Math.sin(i*0.025)*20);
+  }
+  ctx.lineTo(800, GROUND_Y);
+  ctx.fill();
+
+  // Trees
+  trees.forEach(t => drawTree(t.x, t.type));
+
+  // Ground
+  ctx.fillStyle = '#2d5a1e';
+  ctx.fillRect(0, GROUND_Y+48, 800, 60);
+  ctx.fillStyle = '#3a7a2a';
+  ctx.fillRect(0, GROUND_Y+48, 800, 8);
+
+  // Ground detail
+  for (let i = 0; i < 800; i += 12) {
+    const h = 4 + Math.sin(i*0.3)*3;
+    ctx.fillStyle = '#4a8a3a';
+    ctx.fillRect(i, GROUND_Y+44, 3, h);
+  }
+
+  // Vines
+  ctx.strokeStyle = '#2a6a2a';
+  ctx.lineWidth = 2;
+  for (let i = 0; i < 3; i++) {
+    ctx.beginPath();
+    const vx = 150 + i*280;
+    ctx.moveTo(vx, 0);
+    for (let vy = 0; vy < 100; vy += 5) {
+      ctx.lineTo(vx + Math.sin(vy*0.1+frameCount*0.02)*15, vy);
+    }
+    ctx.stroke();
+  }
+}
+
+function drawPlatform(p) {
+  // Wooden platform
+  drawPixelRect(p.x, p.y, p.w, 10, '#6B3410');
+  drawPixelRect(p.x, p.y, p.w, 4, '#8B5420');
+  // Nails
+  drawPixelRect(p.x+4, p.y+2, 2, 2, '#aaa');
+  drawPixelRect(p.x+p.w-6, p.y+2, 2, 2, '#aaa');
+  // Vines
+  ctx.fillStyle = '#2a8a2a';
+  ctx.fillRect(p.x, p.y+8, 4, 12);
+  ctx.fillRect(p.x+p.w-4, p.y+8, 4, 8);
+}
+
+function drawUI() {
+  // Score
+  ctx.fillStyle = '#FFD700';
+  ctx.font = 'bold 28px "Courier New"';
+  ctx.textAlign = 'left';
+  ctx.shadowColor = '#000';
+  ctx.shadowBlur = 4;
+  ctx.fillText(`SCORE: ${score}`, 20, 36);
+  ctx.shadowBlur = 0;
+
+  // Difficulty indicator
+  ctx.fillStyle = '#aaa';
+  ctx.font = '14px "Courier New"';
+  ctx.fillText(`Level ${Math.floor(difficulty)}`, 20, 56);
+
+  // Hearts
+  for (let i = 0; i < 3; i++) {
+    drawHeart(680 + i*35, 12, i < lives);
+  }
+}
+
+function drawStartScreen() {
+  drawBackground();
+
+  // Title box
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  ctx.fillRect(100, 60, 600, 380);
+  ctx.strokeStyle = '#FFD700';
+  ctx.lineWidth = 4;
+  ctx.strokeRect(100, 60, 600, 380);
+
+  // Title
+  ctx.fillStyle = '#FFD700';
+  ctx.font = 'bold 48px "Courier New"';
+  ctx.textAlign = 'center';
+  ctx.shadowColor = '#f80';
+  ctx.shadowBlur = 15;
+  ctx.fillText('JUNGLE PIRATE', 400, 130);
+  ctx.fillText('RUN!', 400, 180);
+  ctx.shadowBlur = 0;
+
+  // Pirate preview
+  ctx.save();
+  ctx.translate(350, 195);
+  ctx.scale(2, 2);
+  drawPirate(0, 0, 1, frameCount*0.1);
+  ctx.restore();
+
+  // Zombie preview
+  ctx.save();
+  ctx.translate(430, 195);
+  ctx.scale(1.5, 1.5);
+  drawZombie({x:0, y:0, speed:-1, frame:frameCount*0.08, type:0});
+  ctx.restore();
+
+  // By line
+  ctx.fillStyle = '#88ccff';
+  ctx.font = '18px "Courier New"';
+  ctx.fillText('by Luke Hagerty', 400, 310);
+
+  // Instructions
+  ctx.fillStyle = '#aaffaa';
+  ctx.font = '14px "Courier New"';
+  ctx.fillText('ARROW KEYS to move | SPACE to jump', 400, 345);
+  ctx.fillText('Dodge Zombies! Collect Gems!', 400, 365);
+
+  // Play button
+  const pulse = Math.sin(frameCount * 0.08) * 5;
+  ctx.fillStyle = '#22aa22';
+  ctx.fillRect(310, 385+pulse, 180, 45);
+  ctx.strokeStyle = '#44ff44';
+  ctx.lineWidth = 3;
+  ctx.strokeRect(310, 385+pulse, 180, 45);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 26px "Courier New"';
+  ctx.fillText('PLAY!', 400, 415+pulse);
+
+  ctx.textAlign = 'left';
+}
+
+function drawGameOver() {
+  ctx.fillStyle = 'rgba(0,0,0,0.8)';
+  ctx.fillRect(0, 0, 800, 500);
+
+  // Skull
+  ctx.fillStyle = '#fff';
+  ctx.font = '60px "Courier New"';
+  ctx.textAlign = 'center';
+  ctx.fillText('\u2620', 400, 150);
+
+  ctx.fillStyle = '#ff4444';
+  ctx.font = 'bold 52px "Courier New"';
+  ctx.shadowColor = '#f00';
+  ctx.shadowBlur = 15;
+  ctx.fillText('GAME OVER', 400, 220);
+  ctx.shadowBlur = 0;
+
+  ctx.fillStyle = '#FFD700';
+  ctx.font = 'bold 32px "Courier New"';
+  ctx.fillText(`Final Score: ${score}`, 400, 280);
+
+  // Rating
+  let rating = 'Cabin Boy';
+  if (score >= 100) rating = 'Deckhand';
+  if (score >= 250) rating = 'First Mate';
+  if (score >= 500) rating = 'Captain';
+  if (score >= 1000) rating = 'Pirate King!';
+  ctx.fillStyle = '#88ccff';
+  ctx.font = '20px "Courier New"';
+  ctx.fillText(`Rank: ${rating}`, 400, 310);
+
+  // Restart button
+  const pulse = Math.sin(frameCount * 0.08) * 3;
+  ctx.fillStyle = '#cc2222';
+  ctx.fillRect(300, 335+pulse, 200, 50);
+  ctx.strokeStyle = '#ff6666';
+  ctx.lineWidth = 3;
+  ctx.strokeRect(300, 335+pulse, 200, 50);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 24px "Courier New"';
+  ctx.fillText('RESTART', 400, 368+pulse);
+
+  ctx.fillStyle = '#888';
+  ctx.font = '14px "Courier New"';
+  ctx.fillText('Press SPACE or click to restart', 400, 420);
+
+  ctx.textAlign = 'left';
+}
+
+function rectCollide(a, b) {
+  return a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y;
+}
+
+function update() {
+  frameCount++;
+
+  if (gameState !== 'playing') return;
+
+  // Difficulty scales with score
+  difficulty = 1 + score / 100;
+
+  // Spawn zombies
+  spawnTimer++;
+  const spawnRate = Math.max(40, 120 - difficulty * 10);
+  if (spawnTimer >= spawnRate) {
+    spawnZombie();
+    spawnTimer = 0;
+  }
+
+  // Spawn gems
+  gemTimer++;
+  if (gemTimer >= Math.max(50, 100 - difficulty * 5)) {
+    spawnGem();
+    gemTimer = 0;
+  }
+
+  // Spawn platforms occasionally
+  platformTimer++;
+  if (platformTimer >= 200 && platforms.length < 3) {
+    platforms.push({
+      x: 150 + Math.random()*500,
+      y: GROUND_Y - 60 - Math.random()*80,
+      w: 80 + Math.random()*60
+    });
+    platformTimer = 0;
+  }
+
+  // Player movement
+  if (keys['ArrowLeft']) {
+    player.x -= player.speed;
+    player.facing = -1;
+    player.frameTimer += 0.2;
+  }
+  if (keys['ArrowRight']) {
+    player.x += player.speed;
+    player.facing = 1;
+    player.frameTimer += 0.2;
+  }
+  if (keys['ArrowLeft'] || keys['ArrowRight']) {
+    player.frame = player.frameTimer;
+  }
+
+  if ((keys['Space'] || keys['ArrowUp']) && player.onGround) {
+    player.vy = -12;
+    player.onGround = false;
+    playSound('jump');
+  }
+
+  // Physics
+  player.vy += GRAVITY;
+  player.y += player.vy;
+
+  // Platform collision
+  player.onGround = false;
+  if (player.vy >= 0) {
+    // Check ground
+    if (player.y >= GROUND_Y) {
+      player.y = GROUND_Y;
+      player.vy = 0;
+      player.onGround = true;
+    }
+    // Check platforms
+    platforms.forEach(p => {
+      if (player.x + player.w > p.x && player.x < p.x + p.w &&
+          player.y + player.h >= p.y && player.y + player.h <= p.y + 15) {
+        player.y = p.y - player.h;
+        player.vy = 0;
+        player.onGround = true;
+      }
+    });
+  }
+
+  // Bounds
+  if (player.x < 0) player.x = 0;
+  if (player.x > 800 - player.w) player.x = 800 - player.w;
+
+  // Update zombies
+  zombies.forEach(z => {
+    z.x += z.speed;
+    z.frameTimer += 0.15;
+    z.frame = z.frameTimer;
+  });
+  zombies = zombies.filter(z => z.x > -60 && z.x < 860);
+
+  // Update gems
+  gems.forEach(g => { g.bob += 0.05; });
+
+  // Collision: player vs zombies
+  if (invincibleTimer > 0) invincibleTimer--;
+  zombies.forEach(z => {
+    if (invincibleTimer <= 0 && rectCollide(
+      {x:player.x+6, y:player.y+4, w:player.w-12, h:player.h-4},
+      {x:z.x+4, y:z.y+2, w:z.w-8, h:z.h-2}
+    )) {
+      lives--;
+      invincibleTimer = 90;
+      screenShake = 10;
+      addParticles(player.x+18, player.y+24, '#ff4444', 15);
+      if (lives <= 0) {
+        gameState = 'gameover';
+        playSound('gameover');
+      } else {
+        playSound('hit');
+      }
+    }
+  });
+
+  // Collision: player vs gems
+  gems = gems.filter(g => {
+    const gy = g.y + Math.sin(g.bob)*5;
+    if (rectCollide(
+      {x:player.x+4, y:player.y+4, w:player.w-8, h:player.h-8},
+      {x:g.x, y:gy, w:g.w, h:g.h}
+    )) {
+      const points = [10, 15, 25][g.type];
+      score += points;
+      playSound('gem');
+      const colors = ['#ff4444','#44ff44','#4488ff'];
+      addParticles(g.x+10, gy+10, colors[g.type], 12);
+      // Score popup particle
+      particles.push({
+        x: g.x, y: gy, vx: 0, vy: -2,
+        life: 40, color: '#FFD700', size: 0,
+        text: `+${points}`
+      });
+      return false;
+    }
+    return true;
+  });
+
+  // Platforms fade out over time
+  platforms = platforms.filter((p, i) => {
+    if (frameCount % 600 === 0 && i === 0) return false;
+    return true;
+  });
+
+  // Update particles
+  particles.forEach(p => {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.life--;
+    if (!p.text) p.vy += 0.1;
+  });
+  particles = particles.filter(p => p.life > 0);
+
+  // Move trees slowly for parallax
+  trees.forEach(t => {
+    t.x -= 0.2;
+    if (t.x < -50) { t.x = 820; t.type = Math.floor(Math.random()*3); }
+  });
+
+  // Screen shake
+  if (screenShake > 0) screenShake--;
+}
+
+function render() {
+  ctx.save();
+  if (screenShake > 0) {
+    ctx.translate(
+      (Math.random()-0.5)*screenShake,
+      (Math.random()-0.5)*screenShake
+    );
+  }
+
+  if (gameState === 'start') {
+    drawStartScreen();
+  } else if (gameState === 'playing' || gameState === 'gameover') {
+    drawBackground();
+    platforms.forEach(drawPlatform);
+    gems.forEach(drawGem);
+    zombies.forEach(drawZombie);
+    drawPirate(player.x, player.y, player.facing, player.frame);
+
+    // Particles
+    particles.forEach(p => {
+      const alpha = p.life / 40;
+      if (p.text) {
+        ctx.fillStyle = p.color;
+        ctx.font = 'bold 18px "Courier New"';
+        ctx.globalAlpha = alpha;
+        ctx.textAlign = 'center';
+        ctx.fillText(p.text, p.x, p.y);
+        ctx.textAlign = 'left';
+        ctx.globalAlpha = 1;
+      } else {
+        ctx.fillStyle = p.color;
+        ctx.globalAlpha = alpha;
+        ctx.fillRect(p.x, p.y, p.size, p.size);
+        ctx.globalAlpha = 1;
+      }
+    });
+
+    drawUI();
+    if (gameState === 'gameover') drawGameOver();
+  }
+  ctx.restore();
+}
+
+function gameLoop() {
+  update();
+  render();
+  requestAnimationFrame(gameLoop);
+}
+
+gameLoop();
+</script>
+</body>
+</html>
