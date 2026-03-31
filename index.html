@@ -7,7 +7,7 @@
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { background: #1a1a2e; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; font-family: 'Courier New', monospace; }
-canvas { display: block; width: min(800px, 100vw - 16px); height: auto; aspect-ratio: 800 / 500; image-rendering: pixelated; image-rendering: crisp-edges; border: 4px solid #e6a817; border-radius: 8px; box-shadow: 0 0 30px rgba(230,168,23,0.4); }
+canvas { display: block; max-width: 100%; max-height: 100vh; image-rendering: pixelated; image-rendering: crisp-edges; border: 4px solid #e6a817; border-radius: 8px; box-shadow: 0 0 30px rgba(230,168,23,0.4); }
 </style>
 </head>
 <body>
@@ -15,8 +15,19 @@ canvas { display: block; width: min(800px, 100vw - 16px); height: auto; aspect-r
 <script>
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
-canvas.width = 800;
-canvas.height = 500;
+
+// Fixed game resolution
+const GAME_W = 800;
+const GAME_H = 500;
+
+// Handle high-DPI displays
+const dpr = window.devicePixelRatio || 1;
+canvas.width = GAME_W * dpr;
+canvas.height = GAME_H * dpr;
+canvas.style.width = GAME_W + 'px';
+canvas.style.height = GAME_H + 'px';
+ctx.scale(dpr, dpr);
+ctx.imageSmoothingEnabled = false;
 
 // Audio context
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
