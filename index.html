@@ -744,6 +744,9 @@ function update() {
 
 function render() {
   ctx.save();
+  // Clear the entire canvas each frame
+  ctx.clearRect(0, 0, GAME_W, GAME_H);
+
   if (screenShake > 0) {
     ctx.translate(
       (Math.random()-0.5)*screenShake,
