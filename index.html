@@ -2,16 +2,35 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Jungle Pirate Run!</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { background: #1a1a2e; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; font-family: 'Courier New', monospace; }
-canvas { display: block; max-width: 100%; max-height: 100vh; image-rendering: pixelated; image-rendering: crisp-edges; border: 4px solid #e6a817; border-radius: 8px; box-shadow: 0 0 30px rgba(230,168,23,0.4); }
+html, body { background: #1a1a2e; height: 100%; overflow: hidden; font-family: 'Courier New', monospace; touch-action: none; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+canvas { display: block; image-rendering: pixelated; image-rendering: crisp-edges; border: 4px solid #e6a817; border-radius: 8px; box-shadow: 0 0 30px rgba(230,168,23,0.4); }
+#touch-controls {
+  display: none; position: fixed; bottom: 0; left: 0; right: 0;
+  height: 130px; pointer-events: none; z-index: 10;
+}
+#touch-controls button {
+  pointer-events: auto; position: absolute; border: none; border-radius: 50%;
+  font-size: 28px; font-weight: bold; color: #fff; opacity: 0.5;
+  -webkit-tap-highlight-color: transparent; outline: none;
+}
+#touch-controls button:active, #touch-controls button.pressed { opacity: 0.85; transform: scale(0.92); }
+#btn-left { width: 70px; height: 70px; bottom: 15px; left: 15px; background: rgba(255,255,255,0.2); }
+#btn-right { width: 70px; height: 70px; bottom: 15px; left: 100px; background: rgba(255,255,255,0.2); }
+#btn-jump { width: 85px; height: 85px; bottom: 15px; right: 15px; background: rgba(34,170,34,0.4); font-size: 16px; }
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
+<div id="touch-controls">
+  <button id="btn-left">&#9664;</button>
+  <button id="btn-right">&#9654;</button>
+  <button id="btn-jump">JUMP</button>
+</div>
 <script>
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -20,14 +39,32 @@ const ctx = canvas.getContext('2d');
 const GAME_W = 800;
 const GAME_H = 500;
 
-// Handle high-DPI displays
+// Detect mobile/touch device
+const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+
+// Handle high-DPI displays and responsive sizing
 const dpr = window.devicePixelRatio || 1;
-canvas.width = GAME_W * dpr;
-canvas.height = GAME_H * dpr;
-canvas.style.width = GAME_W + 'px';
-canvas.style.height = GAME_H + 'px';
-ctx.scale(dpr, dpr);
-ctx.imageSmoothingEnabled = false;
+
+function resizeCanvas() {
+  const maxW = window.innerWidth - 8;
+  const maxH = isTouchDevice ? window.innerHeight - 140 : window.innerHeight - 8;
+  const scale = Math.min(maxW / GAME_W, maxH / GAME_H);
+  const w = Math.floor(GAME_W * scale);
+  const h = Math.floor(GAME_H * scale);
+  canvas.width = GAME_W * dpr;
+  canvas.height = GAME_H * dpr;
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+}
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
+
+// Show touch controls on mobile
+if (isTouchDevice) {
+  document.getElementById('touch-controls').style.display = 'block';
+}
 
 // Audio context
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -111,7 +148,7 @@ const player = {
   frame: 0, frameTimer: 0
 };
 
-// Keys
+// Keys (keyboard + virtual touch)
 const keys = {};
 window.addEventListener('keydown', e => {
   keys[e.code] = true;
@@ -126,13 +163,56 @@ window.addEventListener('keydown', e => {
   }
 });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+// Canvas click/tap handler
 canvas.addEventListener('click', e => {
   const rect = canvas.getBoundingClientRect();
-  const mx = (e.clientX - rect.left) * (800/rect.width);
-  const my = (e.clientY - rect.top) * (500/rect.height);
+  const mx = (e.clientX - rect.left) * (GAME_W/rect.width);
+  const my = (e.clientY - rect.top) * (GAME_H/rect.height);
   if (gameState === 'start') { audioCtx.resume(); startGame(); }
-  if (gameState === 'gameover' && mx > 300 && mx < 500 && my > 310 && my < 370) { audioCtx.resume(); startGame(); }
+  if (gameState === 'gameover' && mx > 250 && mx < 550 && my > 310 && my < 400) { audioCtx.resume(); startGame(); }
 });
+
+// Touch controls
+function setupTouchButton(id, keyCode) {
+  const btn = document.getElementById(id);
+  btn.addEventListener('touchstart', e => {
+    e.preventDefault();
+    audioCtx.resume();
+    keys[keyCode] = true;
+    btn.classList.add('pressed');
+    if (gameState === 'start') startGame();
+    if (gameState === 'gameover') startGame();
+  }, { passive: false });
+  btn.addEventListener('touchend', e => {
+    e.preventDefault();
+    keys[keyCode] = false;
+    btn.classList.remove('pressed');
+  }, { passive: false });
+  btn.addEventListener('touchcancel', e => {
+    keys[keyCode] = false;
+    btn.classList.remove('pressed');
+  });
+  // Prevent mouse events from firing on touch
+  btn.addEventListener('mousedown', e => e.preventDefault());
+}
+
+setupTouchButton('btn-left', 'ArrowLeft');
+setupTouchButton('btn-right', 'ArrowRight');
+setupTouchButton('btn-jump', 'Space');
+
+// Prevent default touch behaviors on canvas (no scroll/zoom)
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  audioCtx.resume();
+  const rect = canvas.getBoundingClientRect();
+  const touch = e.touches[0];
+  const mx = (touch.clientX - rect.left) * (GAME_W/rect.width);
+  const my = (touch.clientY - rect.top) * (GAME_H/rect.height);
+  if (gameState === 'start') startGame();
+  if (gameState === 'gameover' && mx > 250 && mx < 550 && my > 310 && my < 400) startGame();
+}, { passive: false });
+canvas.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
 
 let zombies = [];
 let gems = [];
@@ -214,7 +294,7 @@ function drawPirate(x, y, facing, frame) {
   drawPixelRect(x+8, y+42, 9, 6, '#4a2a0a');
   drawPixelRect(x+19, y+42, 9, 6, '#4a2a0a');
   // Legs walk
-  if (!player.onGround || (keys['ArrowLeft'] || keys['ArrowRight'])) {
+  if (!player.onGround || keys['ArrowLeft'] || keys['ArrowRight']) {
     const legOff = Math.sin(f * Math.PI/2) * 3;
     drawPixelRect(x+10, y+44, 7, 4, '#4a2a0a');
     drawPixelRect(x+19+legOff, y+44, 7, 4, '#4a2a0a');
@@ -507,22 +587,27 @@ function drawStartScreen() {
   ctx.font = '18px "Courier New"';
   ctx.fillText('by Luke Hagerty', 400, 310);
 
-  // Instructions
+  // Instructions (different for mobile vs desktop)
   ctx.fillStyle = '#aaffaa';
   ctx.font = '14px "Courier New"';
-  ctx.fillText('ARROW KEYS to move | SPACE to jump', 400, 345);
-  ctx.fillText('Dodge Zombies! Collect Gems!', 400, 365);
+  if (isTouchDevice) {
+    ctx.fillText('Use buttons below to move & jump', 400, 340);
+    ctx.fillText('Jump on zombies to stomp them!', 400, 360);
+  } else {
+    ctx.fillText('ARROW KEYS to move | SPACE to jump', 400, 340);
+    ctx.fillText('Jump on zombies to stomp them!', 400, 360);
+  }
 
-  // Play button
+  // Play button (larger tap target for mobile)
   const pulse = Math.sin(frameCount * 0.08) * 5;
   ctx.fillStyle = '#22aa22';
-  ctx.fillRect(310, 385+pulse, 180, 45);
+  ctx.fillRect(280, 380+pulse, 240, 50);
   ctx.strokeStyle = '#44ff44';
   ctx.lineWidth = 3;
-  ctx.strokeRect(310, 385+pulse, 180, 45);
+  ctx.strokeRect(280, 380+pulse, 240, 50);
   ctx.fillStyle = '#fff';
-  ctx.font = 'bold 26px "Courier New"';
-  ctx.fillText('PLAY!', 400, 415+pulse);
+  ctx.font = 'bold 28px "Courier New"';
+  ctx.fillText(isTouchDevice ? 'TAP TO PLAY!' : 'PLAY!', 400, 413+pulse);
 
   ctx.textAlign = 'left';
 }
@@ -558,20 +643,22 @@ function drawGameOver() {
   ctx.font = '20px "Courier New"';
   ctx.fillText(`Rank: ${rating}`, 400, 310);
 
-  // Restart button
+  // Restart button (larger for mobile)
   const pulse = Math.sin(frameCount * 0.08) * 3;
   ctx.fillStyle = '#cc2222';
-  ctx.fillRect(300, 335+pulse, 200, 50);
+  ctx.fillRect(250, 330+pulse, 300, 60);
   ctx.strokeStyle = '#ff6666';
   ctx.lineWidth = 3;
-  ctx.strokeRect(300, 335+pulse, 200, 50);
+  ctx.strokeRect(250, 330+pulse, 300, 60);
   ctx.fillStyle = '#fff';
-  ctx.font = 'bold 24px "Courier New"';
-  ctx.fillText('RESTART', 400, 368+pulse);
+  ctx.font = 'bold 26px "Courier New"';
+  ctx.fillText(isTouchDevice ? 'TAP TO RESTART' : 'RESTART', 400, 368+pulse);
 
   ctx.fillStyle = '#888';
   ctx.font = '14px "Courier New"';
-  ctx.fillText('Press SPACE or click to restart', 400, 420);
+  if (!isTouchDevice) {
+    ctx.fillText('Press SPACE or click to restart', 400, 420);
+  }
 
   ctx.textAlign = 'left';
 }
