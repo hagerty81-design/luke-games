@@ -676,22 +676,45 @@ function update() {
 
   // Collision: player vs zombies
   if (invincibleTimer > 0) invincibleTimer--;
-  zombies.forEach(z => {
-    if (invincibleTimer <= 0 && rectCollide(
+  zombies = zombies.filter(z => {
+    if (rectCollide(
       {x:player.x+6, y:player.y+4, w:player.w-12, h:player.h-4},
       {x:z.x+4, y:z.y+2, w:z.w-8, h:z.h-2}
     )) {
-      lives--;
-      invincibleTimer = 90;
-      screenShake = 10;
-      addParticles(player.x+18, player.y+24, '#ff4444', 15);
-      if (lives <= 0) {
-        gameState = 'gameover';
-        playSound('gameover');
-      } else {
-        playSound('hit');
+      // Stomp kill: player is falling and feet are above zombie's midpoint
+      const playerFeet = player.y + player.h;
+      const zombieMid = z.y + z.h * 0.4;
+      if (player.vy > 0 && playerFeet < zombieMid + 10) {
+        // Stomped! Kill the zombie
+        player.vy = -9; // bounce up
+        score += 20;
+        screenShake = 4;
+        playSound('gem');
+        addParticles(z.x+16, z.y+10, '#7aff7a', 15);
+        addParticles(z.x+16, z.y+20, '#4a7a4a', 10);
+        // Score popup
+        particles.push({
+          x: z.x+16, y: z.y, vx: 0, vy: -2,
+          life: 40, color: '#7aff7a', size: 0,
+          text: '+20 STOMP!'
+        });
+        return false; // remove zombie
+      }
+      // Side hit: take damage
+      if (invincibleTimer <= 0) {
+        lives--;
+        invincibleTimer = 90;
+        screenShake = 10;
+        addParticles(player.x+18, player.y+24, '#ff4444', 15);
+        if (lives <= 0) {
+          gameState = 'gameover';
+          playSound('gameover');
+        } else {
+          playSound('hit');
+        }
       }
     }
+    return true; // keep zombie
   });
 
   // Collision: player vs gems
